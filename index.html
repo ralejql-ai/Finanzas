@@ -180,10 +180,11 @@
     <!-- ===== INICIO ===== -->
     <section id="v-inicio" class="on">
       <div class="hero">
-        <div class="lbl">Patrimonio total</div>
-        <div class="big mono" id="heroBs">—</div>
+        <div class="lbl">Disponible para gastar</div>
+        <div class="big mono" id="heroMain">—</div>
+        <div class="tiny muted" id="heroNote" style="margin-top:1px"></div>
         <div class="equ">
-          <div class="e"><div class="k"><span class="dot" style="background:var(--usd)"></span>USD · BCV</div><div class="v mono" id="heroUsd">—</div></div>
+          <div class="e"><div class="k"><span class="dot" style="background:var(--bs)"></span>Bolívares</div><div class="v mono" id="heroBs">—</div></div>
           <div class="e"><div class="k"><span class="dot" style="background:var(--usdt)"></span>USDT · Binance</div><div class="v mono" id="heroUsdt">—</div></div>
         </div>
         <div class="split">
@@ -193,6 +194,11 @@
       </div>
 
       <div class="rates" id="ratesBar"></div>
+
+      <div class="sec">
+        <div class="hd"><h2>Disponible por cuenta</h2><span class="addlink" data-go="cuentas">Editar</span></div>
+        <div id="breakdown"></div>
+      </div>
 
       <div class="sec">
         <div class="hd"><h2>Este mes</h2><span class="small muted" id="monthLbl"></span></div>
@@ -243,6 +249,14 @@
       </div>
     </section>
 
+    <!-- ===== COMPRAS ===== -->
+    <section id="v-compras">
+      <div class="sec">
+        <div class="hd"><h2>Listas de compras</h2><span class="addlink" id="addList">+ Nueva</span></div>
+        <div id="lists"></div>
+      </div>
+    </section>
+
   </div>
 </div>
 
@@ -250,8 +264,9 @@
 
 <div class="nav">
   <button data-go="inicio" class="on"><span class="ni">🏠</span>Inicio</button>
-  <button data-go="movimientos"><span class="ni">📋</span>Movimientos</button>
-  <button data-go="presupuestos"><span class="ni">🎯</span>Presupuesto</button>
+  <button data-go="movimientos"><span class="ni">📋</span>Movim.</button>
+  <button data-go="compras"><span class="ni">🛒</span>Compras</button>
+  <button data-go="presupuestos"><span class="ni">🎯</span>Presup.</button>
   <button data-go="metas"><span class="ni">🐷</span>Metas</button>
   <button data-go="cuentas"><span class="ni">🏦</span>Cuentas</button>
 </div>
@@ -271,6 +286,7 @@ const ACCOUNT_TYPES = [
   {t:"Banco Bs", c:"VES", ic:"🏦"},
   {t:"Pago Móvil", c:"VES", ic:"📲"},
   {t:"Efectivo Bs", c:"VES", ic:"💵"},
+  {t:"Banco USD", c:"USD", ic:"🏦"},
   {t:"Zelle", c:"USD", ic:"💳"},
   {t:"Efectivo USD", c:"USD", ic:"💵"},
   {t:"Binance", c:"USDT", ic:"🟡"},
@@ -294,7 +310,8 @@ function load(){
 }
 function migrate(s){
   s.accounts = s.accounts||[]; s.txns = s.txns||[]; s.budgets = s.budgets||[];
-  s.goals = s.goals||[];
+  s.goals = (s.goals||[]).map(g=>Object.assign({accountId:null}, g));
+  s.lists = s.lists||[];
   s.rates = Object.assign({bcv:DEFAULT_RATES.bcv, binance:DEFAULT_RATES.binance, source:"referencial", updatedAt:null, manualBcv:null, manualBinance:null}, s.rates||{});
   s.settings = Object.assign({cotizaveKey:"", lastUsedAccount:null}, s.settings||{});
   return s;
@@ -396,6 +413,22 @@ function totals(){
     soloBs             // bolívares
   };
 }
+function reservedFor(accId){
+  let r=0;
+  for(const g of state.goals){ if(g.accountId===accId) r += num0(g.saved); }
+  return r;
+}
+function availableBal(acc){ return accBalance(acc) - reservedFor(acc.id); }
+function availTotals(){
+  let bs=0, divisasUsd=0, soloBs=0;
+  for(const a of state.accounts){
+    const bal = availableBal(a);
+    bs += toBs(bal, a.currency);
+    if(a.currency==="VES") soloBs += bal;
+    else divisasUsd += convert(bal, a.currency, "USD");
+  }
+  return { bs, usd: fromBs(bs,"USD"), usdt: fromBs(bs,"USDT"), divisasUsd, soloBs };
+}
 function monthKey(d){ const x=new Date(d); return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0"); }
 function curMonth(){ return monthKey(new Date()); }
 
@@ -449,16 +482,53 @@ function timeAgo(iso){
 
 /* ============ RENDER ============ */
 function render(){
-  renderHero(); renderRatesBar(); renderMonth(); renderRecent();
-  renderAllTx(); renderBudgets(); renderGoals(); renderAccounts();
+  renderHero(); renderRatesBar(); renderBreakdown(); renderMonth(); renderRecent();
+  renderAllTx(); renderBudgets(); renderGoals(); renderAccounts(); renderLists();
 }
 function renderHero(){
-  const t = totals();
-  document.getElementById("heroBs").innerHTML = fmtBs0.format(t.bs)+'<span class="cur">Bs</span>';
-  document.getElementById("heroUsd").textContent = "$"+fmtUsd.format(t.usd);
-  document.getElementById("heroUsdt").textContent = fmtUsd.format(t.usdt)+" USDT";
-  document.getElementById("splitDiv").textContent = "$"+fmtUsd.format(t.divisasUsd);
-  document.getElementById("splitBs").textContent = fmtBs0.format(t.soloBs)+" Bs";
+  const t = totals(), d = availTotals();
+  const reserved = t.usd - d.usd;
+  document.getElementById("heroMain").innerHTML = "$"+fmtUsd.format(d.usd)+'<span class="cur">USD disp.</span>';
+  document.getElementById("heroNote").textContent = reserved>0.005
+    ? "Con ahorros: $"+fmtUsd.format(t.usd)+" · Reservado en metas: $"+fmtUsd.format(reserved)
+    : "≈ al cambio BCV · "+fmtBs.format(effBcv())+" Bs/$";
+  document.getElementById("heroBs").textContent = fmtBs0.format(d.bs)+" Bs";
+  document.getElementById("heroUsdt").textContent = fmtUsd.format(d.usdt)+" USDT";
+  document.getElementById("splitDiv").textContent = "$"+fmtUsd.format(d.divisasUsd);
+  document.getElementById("splitBs").textContent = fmtBs0.format(d.soloBs)+" Bs";
+}
+function renderBreakdown(){
+  const el=document.getElementById("breakdown");
+  const groups=[["VES","Bolívares"],["USD","Dólares (USD)"],["USDT","Cripto (USDT)"]];
+  let html="";
+  for(const g of groups){
+    const cur=g[0], label=g[1];
+    const accs=state.accounts.filter(a=>a.currency===cur);
+    if(!accs.length) continue;
+    let subNat=0, subUsd=0;
+    const rows=accs.map(a=>{
+      const bal=accBalance(a), res=reservedFor(a.id), avail=bal-res;
+      subNat+=avail;
+      const usd=convert(avail,cur,"USD"); subUsd+=usd;
+      const sub = res>0.005
+        ? "≈ $"+fmtUsd.format(usd)+" · "+money(res,cur)+" en metas"
+        : (cur==="USD" ? "≈ "+fmtBs0.format(toBs(avail,cur))+" Bs" : "≈ $"+fmtUsd.format(usd));
+      const cls = avail<-0.005? " neg":"";
+      return `<div class="acc" data-acc="${a.id}">
+        <div class="ic">${a.ic||"📦"}</div>
+        <div class="grow"><div class="nm">${esc(a.name)}</div><div class="ty">${esc(a.type||"")}</div></div>
+        <div><div class="bal mono${cls}">${money(avail,cur)}</div><div class="sub mono">${sub}</div></div>
+      </div>`;
+    }).join("");
+    html += `<div style="margin-bottom:13px">
+      <div class="row between" style="margin:0 2px 7px">
+        <div class="row" style="gap:8px"><span class="curtag t-${cur}">${cur}</span><b style="font-size:13.5px">${label}</b></div>
+        <div style="text-align:right"><span class="mono" style="font-weight:700;font-size:13.5px">${money(subNat,cur)}</span><br><span class="tiny muted mono">≈ $${fmtUsd.format(subUsd)}</span></div>
+      </div>
+      <div class="list">${rows}</div>
+    </div>`;
+  }
+  el.innerHTML = html || emptyBox("🏦","Sin cuentas","Agrega tus cuentas en la pestaña Cuentas");
 }
 function renderRatesBar(){
   const r = state.rates;
@@ -548,7 +618,7 @@ function renderGoals(){
         <div class="ring" style="--p:${pct}"><span>${Math.round(pct)}%</span></div>
         <div class="grow"><b>${esc(g.name)}</b>
           <div class="small muted">${money(saved,g.currency)} de ${money(tgt,g.currency)}</div>
-          <div class="tiny muted">${pct>=100? "🎉 ¡Meta cumplida!": "Faltan "+money(tgt-saved,g.currency)}</div></div>
+          <div class="tiny muted">${pct>=100? "🎉 ¡Meta cumplida!": "Faltan "+money(tgt-saved,g.currency)} · ${g.accountId? "🔒 de "+esc((state.accounts.find(a=>a.id===g.accountId)||{}).name||"cuenta") : "solo seguimiento"}</div></div>
         <button class="btn sec" style="width:auto;padding:9px 14px;margin:0" data-addsave="${g.id}">+ Aporte</button>
       </div>
     </div>`;
@@ -571,6 +641,74 @@ function renderAccounts(){
 function emptyBox(em,t,s){ return `<div class="empty"><span class="em">${em}</span><b>${t}</b><div class="small" style="margin-top:4px">${s}</div></div>`; }
 function byDateDesc(a,b){ return (b.date||"").localeCompare(a.date||"") || (b.createdAt||"").localeCompare(a.createdAt||""); }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---- Listas de compras ---- */
+function estList(l){
+  let usd=0, any=false;
+  for(const it of l.items){ if(it.checked) continue; const p=num0(it.price); if(p>0){ any=true; usd += convert(p*(num0(it.qty)||1), it.currency||"USD","USD"); } }
+  return any? "≈ $"+fmtUsd.format(usd):"";
+}
+function renderLists(){
+  const el=document.getElementById("lists");
+  if(!state.lists.length){ el.innerHTML=emptyBox("🛒","Sin listas","Crea una lista y ve tachando lo que vayas consiguiendo"); return; }
+  el.innerHTML = state.lists.map(l=>{
+    const total=l.items.length, done=l.items.filter(i=>i.checked).length;
+    const pct = total? done/total*100:0;
+    const est=estList(l);
+    return `<div class="card" style="margin-bottom:10px" data-list="${l.id}">
+      <div class="row between"><b>🛒 ${esc(l.name)}</b><span class="small muted">${done}/${total}</span></div>
+      <div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div>
+      <div class="tiny muted" style="margin-top:6px">${total-done} por comprar${est?" · "+est:""}</div>
+    </div>`;
+  }).join("");
+}
+function openList(id){ drawList(state.lists.find(x=>x.id===id)); }
+function drawList(l){
+  if(!l) return;
+  const rows = l.items.length? l.items.map(it=>{
+    const meta=[ it.qty?("x"+it.qty):"", it.price?money(num0(it.price)*(num0(it.qty)||1), it.currency||"USD"):"" ].filter(Boolean).join(" · ");
+    return `<div class="acc" style="cursor:pointer" data-item="${it.id}">
+      <div class="ic" style="font-size:20px">${it.checked?"✅":"⬜"}</div>
+      <div class="grow"><div class="nm" style="${it.checked?'text-decoration:line-through;color:var(--mut)':''}">${esc(it.name)}</div>
+        ${meta?`<div class="ty">${meta}</div>`:""}</div>
+      <button class="delx" data-delitem="${it.id}">✕</button>
+    </div>`;
+  }).join("") : `<div class="empty"><span class="em">📝</span>Lista vacía. Agrega lo que quieras comprar.</div>`;
+  const done=l.items.filter(i=>i.checked).length;
+  openSheet(`<div class="row between" style="margin-bottom:12px"><h3 style="margin:0">${esc(l.name)}</h3><span class="small muted">${done}/${l.items.length}</span></div>
+    <div class="list" style="margin-bottom:14px">${rows}</div>
+    <label class="small muted" style="font-weight:600">Agregar artículo</label>
+    <div class="field" style="margin-top:6px"><input id="liName" placeholder="Ej. Harina PAN"></div>
+    <div class="two">
+      <div class="field"><label>Cantidad</label><input id="liQty" inputmode="decimal" placeholder="1"></div>
+      <div class="field"><label>Precio aprox.</label><input id="liPrice" inputmode="decimal" placeholder="0,00"></div>
+      <div class="field"><label>Moneda</label><select id="liCur">${CUR.map(c=>`<option ${c==="USD"?"selected":""}>${c}</option>`).join("")}</select></div>
+    </div>
+    <button class="btn" id="liAdd">Agregar a la lista</button>
+    <div class="two" style="margin-top:10px">
+      <button class="btn sec" id="liRename">Renombrar</button>
+      <button class="btn danger" id="liDel">Eliminar lista</button>
+    </div>`);
+  panel.querySelectorAll("[data-item]").forEach(r=> r.addEventListener("click", ev=>{
+    if(ev.target.closest("[data-delitem]")) return;
+    const it=l.items.find(x=>x.id===r.dataset.item); if(it){ it.checked=!it.checked; save(); drawList(l); }
+  }));
+  panel.querySelectorAll("[data-delitem]").forEach(b=> b.addEventListener("click", ev=>{
+    ev.stopPropagation(); l.items=l.items.filter(x=>x.id!==b.dataset.delitem); save(); drawList(l);
+  }));
+  panel.querySelector("#liAdd").addEventListener("click",()=>{
+    const nm=panel.querySelector("#liName").value.trim(); if(!nm){ alert("Escribe el nombre del artículo."); return; }
+    l.items.push({id:uid(), name:nm, qty:parseNum(panel.querySelector("#liQty").value)||null, price:parseNum(panel.querySelector("#liPrice").value)||null, currency:panel.querySelector("#liCur").value, checked:false});
+    save(); drawList(l);
+  });
+  panel.querySelector("#liRename").addEventListener("click",()=>{ const n=prompt("Nuevo nombre de la lista:", l.name); if(n&&n.trim()){ l.name=n.trim(); save(); drawList(l); } });
+  panel.querySelector("#liDel").addEventListener("click",()=>{ if(confirm("¿Eliminar esta lista completa?")){ state.lists=state.lists.filter(x=>x.id!==l.id); save(); closeSheet(); render(); } });
+}
+function openNewList(){
+  const n=prompt("Nombre de la lista (ej. Mercado de la semana):"); if(!n||!n.trim()) return;
+  const l={id:uid(), name:n.trim(), items:[], createdAt:new Date().toISOString()};
+  state.lists.push(l); save(); render(); drawList(l);
+}
 
 /* ============ NAVEGACIÓN ============ */
 function go(view){
@@ -620,7 +758,7 @@ function drawTx(){
     const suggested = (acc&&toAcc&&d.amount)? round2(convert(num0(d.amount), acc.currency, toAcc.currency)) : "";
     body += `<div class="field"><label>Hacia la cuenta</label><select id="txTo">${toOpts}</select></div>
       <div class="field"><label>Monto recibido ${toAcc?"("+toAcc.currency+")":""}</label>
-        <input id="txToAmt" inputmode="decimal" placeholder="${suggested!==''?fmtUsd.format(suggested).replace('.',','):'0,00'}" value="${d.toAmount!=null?String(d.toAmount).replace('.',','):''}">
+        <input id="txToAmt" inputmode="decimal" placeholder="${suggested!==''?fmtUsd.format(suggested):'0,00'}" value="${d.toAmount!=null?String(d.toAmount).replace('.',','):''}">
         <div class="note">Sugerido por tasa actual: ${suggested!==""? money(suggested,toAcc?toAcc.currency:""):"—"}. Puedes ajustarlo al monto real que recibiste.</div></div>`;
   } else {
     const cats = CATS[d.kind];
@@ -643,7 +781,17 @@ function drawTx(){
   panel.querySelector("#txSave").addEventListener("click", saveTx);
   const del=panel.querySelector("#txDel"); if(del) del.addEventListener("click", ()=>{ if(confirm("¿Eliminar este movimiento?")){ state.txns=state.txns.filter(x=>x.id!==d.id); save(); closeSheet(); render(); } });
 }
-function parseNum(v){ if(v==null) return NaN; return parseFloat(String(v).replace(/\./g,"").replace(",",".")); }
+function parseNum(v){
+  if(v==null) return NaN;
+  let s = String(v).trim().replace(/[^\d.,-]/g,"");
+  if(s==="") return NaN;
+  const lc=s.lastIndexOf(","), ld=s.lastIndexOf(".");
+  const dec=Math.max(lc,ld);
+  if(dec===-1) return parseFloat(s);           // sin separador: entero
+  const ent=s.slice(0,dec).replace(/[.,]/g,""); // el ultimo separador es el decimal
+  const fra=s.slice(dec+1).replace(/[.,]/g,"");
+  return parseFloat((ent||"0")+"."+fra);
+}
 function syncTx(){
   const d=txDraft;
   const amt=panel.querySelector("#txAmt"); if(amt) d.amount = amt.value.trim()===""?"":parseNum(amt.value);
@@ -740,19 +888,29 @@ function openBudget(existing){
 
 /* ---- Metas ---- */
 function openGoal(existing){
-  const e=existing||{id:null,name:"",currency:"USD",target:"",saved:0};
+  const e=existing||{id:null,name:"",currency:"USD",target:"",saved:0,accountId:null};
+  const accOpts = `<option value="">Ninguna (solo seguimiento)</option>`+
+    state.accounts.map(a=>`<option value="${a.id}" ${a.id===e.accountId?"selected":""}>${esc(a.name)} (${a.currency})</option>`).join("");
   const curOpts=CUR.map(c=>`<option value="${c}" ${c===e.currency?"selected":""}>${c}</option>`).join("");
   openSheet(`<h3>${e.id?"Editar":"Nueva"} meta</h3>
     <div class="field"><label>Nombre</label><input id="gName" placeholder="Ej. Fondo de emergencia" value="${esc(e.name)}"></div>
+    <div class="field"><label>Reservar de la cuenta</label><select id="gAcc">${accOpts}</select>
+      <div class="note">Si eliges una cuenta, este dinero se aparta de tu "disponible para gastar" — sigue físicamente en la cuenta, pero deja de contar como gastable. La moneda de la meta será la de esa cuenta.</div></div>
     <div class="two">
       <div class="field"><label>Meta</label><input id="gTgt" inputmode="decimal" placeholder="0,00" value="${e.target?String(e.target).replace('.',','):''}"></div>
       <div class="field"><label>Moneda</label><select id="gCur">${curOpts}</select></div>
     </div>
-    <div class="field"><label>Ya ahorrado</label><input id="gSaved" inputmode="decimal" placeholder="0,00" value="${e.saved?String(e.saved).replace('.',','):''}"></div>
+    <div class="field"><label>Ya reservado / ahorrado</label><input id="gSaved" inputmode="decimal" placeholder="0,00" value="${e.saved?String(e.saved).replace('.',','):''}"></div>
     <button class="btn" id="gSave">${e.id?"Guardar":"Crear meta"}</button>
     ${e.id?'<button class="btn danger" id="gDel" style="margin-top:9px">Eliminar</button>':''}`);
+  const accSel=panel.querySelector("#gAcc"), curSel=panel.querySelector("#gCur");
+  const syncCur=()=>{ const a=state.accounts.find(x=>x.id===accSel.value); if(a){ curSel.value=a.currency; curSel.disabled=true; } else { curSel.disabled=false; } };
+  accSel.addEventListener("change", syncCur); syncCur();
   panel.querySelector("#gSave").addEventListener("click",()=>{
-    const rec={id:e.id||uid(), name:panel.querySelector("#gName").value.trim(), currency:panel.querySelector("#gCur").value,
+    const accId = accSel.value||null;
+    const acc = state.accounts.find(x=>x.id===accId);
+    const rec={id:e.id||uid(), name:panel.querySelector("#gName").value.trim(), accountId:accId,
+      currency: acc? acc.currency : curSel.value,
       target:parseNum(panel.querySelector("#gTgt").value)||0, saved:parseNum(panel.querySelector("#gSaved").value)||0};
     if(!rec.name){ alert("Ponle nombre a la meta."); return; }
     if(rec.target<=0){ alert("La meta debe ser mayor a 0."); return; }
@@ -765,7 +923,7 @@ function openAddSave(id){
   const g=state.goals.find(x=>x.id===id); if(!g) return;
   openSheet(`<h3>Aporte a "${esc(g.name)}"</h3>
     <div class="field"><input class="amtin mono" id="svAmt" inputmode="decimal" placeholder="0,00"><div class="center small muted">en ${g.currency}</div></div>
-    <div class="note">Ahorrado: ${money(num0(g.saved),g.currency)} de ${money(num0(g.target),g.currency)}.</div>
+    <div class="note">Ahorrado: ${money(num0(g.saved),g.currency)} de ${money(num0(g.target),g.currency)}.${g.accountId? " Cada aporte aparta más dinero de tu disponible (el dinero sigue en la cuenta).":""}</div>
     <button class="btn" id="svSave" style="margin-top:10px">Agregar aporte</button>
     <button class="btn sec" id="svSub" style="margin-top:9px">Retirar (restar)</button>`);
   panel.querySelector("#svAmt").focus();
@@ -844,6 +1002,7 @@ document.getElementById("btnSettings").addEventListener("click", openSettings);
 document.getElementById("addAccount").addEventListener("click",()=>openAccount());
 document.getElementById("addBudget").addEventListener("click",()=>openBudget());
 document.getElementById("addGoal").addEventListener("click",()=>openGoal());
+document.getElementById("addList").addEventListener("click", openNewList);
 
 document.body.addEventListener("click", e=>{
   const tx=e.target.closest("[data-tx]"); if(tx){ const t=state.txns.find(x=>x.id===tx.dataset.tx); if(t) openTx(t); return; }
@@ -851,6 +1010,7 @@ document.body.addEventListener("click", e=>{
   const bd=e.target.closest("[data-bud]"); if(bd){ const b=state.budgets.find(x=>x.id===bd.dataset.bud); if(b) openBudget(b); return; }
   const sv=e.target.closest("[data-addsave]"); if(sv){ openAddSave(sv.dataset.addsave); return; }
   const gl=e.target.closest("[data-goal]"); if(gl && !e.target.closest("[data-addsave]")){ const g=state.goals.find(x=>x.id===gl.dataset.goal); if(g) openGoal(g); return; }
+  const ls=e.target.closest("[data-list]"); if(ls){ openList(ls.dataset.list); return; }
 });
 
 /* ============ INICIO ============ */
